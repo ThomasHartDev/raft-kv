@@ -12,14 +12,17 @@ type MsgType uint8
 
 const (
 	MsgPing MsgType = iota
+	MsgRequestVote
+	MsgRequestVoteResp
 )
 
 type Message struct {
-	From NodeID
-	To   NodeID
-	Term Term
-	Type MsgType
-	Body []byte
+	From        NodeID
+	To          NodeID
+	Term        Term
+	Type        MsgType
+	VoteGranted bool
+	Body        []byte
 }
 
 type Transport interface {

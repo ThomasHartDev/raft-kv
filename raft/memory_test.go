@@ -123,3 +123,52 @@ func TestPingWithoutTransport(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestPartitionDropsAndHealRestores(t *testing.T) {
+	net := NewMemoryNetwork(4)
+	ta, _ := net.Attach(1)
+	tb, _ := net.Attach(2)
+	net.Partition(1, 2)
+	if err := ta.Send(Message{To: 2, Type: MsgPing}); err != ErrDropped {
+		t.Fatalf("got %v", err)
+	}
+	select {
+	case <-tb.Recv():
+		t.Fatal("message crossed the cut")
+	default:
+	}
+	net.Heal(1, 2)
+	if err := ta.Send(Message{To: 2, Type: MsgPing}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case msg := <-tb.Recv():
+		if msg.Type != MsgPing {
+			t.Fatalf("msg=%+v", msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout after heal")
+	}
+}
+
+func TestIsolateIsUndirected(t *testing.T) {
+	net := NewMemoryNetwork(4)
+	ta, _ := net.Attach(1)
+	tb, _ := net.Attach(2)
+	tc, _ := net.Attach(3)
+	net.Isolate(2)
+	if err := ta.Send(Message{To: 2, Type: MsgPing}); err != ErrDropped {
+		t.Fatalf("a->b %v", err)
+	}
+	if err := tb.Send(Message{To: 3, Type: MsgPing}); err != ErrDropped {
+		t.Fatalf("b->c %v", err)
+	}
+	if err := ta.Send(Message{To: 3, Type: MsgPing}); err != nil {
+		t.Fatalf("a->c should stay up: %v", err)
+	}
+	select {
+	case <-tc.Recv():
+	case <-time.After(time.Second):
+		t.Fatal("a-c should deliver")
+	}
+}
