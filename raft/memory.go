@@ -7,10 +7,23 @@ import (
 
 var ErrAlreadyAttached = errors.New("raft: node already attached")
 
+type pair struct {
+	a NodeID
+	b NodeID
+}
+
+func canon(a, b NodeID) pair {
+	if a > b {
+		return pair{a: b, b: a}
+	}
+	return pair{a: a, b: b}
+}
+
 type MemoryNetwork struct {
 	mu       sync.Mutex
 	capacity int
 	boxes    map[NodeID]chan Message
+	cuts     map[pair]struct{}
 }
 
 func NewMemoryNetwork(mailbox int) *MemoryNetwork {
@@ -20,6 +33,7 @@ func NewMemoryNetwork(mailbox int) *MemoryNetwork {
 	return &MemoryNetwork{
 		capacity: mailbox,
 		boxes:    make(map[NodeID]chan Message),
+		cuts:     make(map[pair]struct{}),
 	}
 }
 
@@ -43,9 +57,40 @@ func (n *MemoryNetwork) Detach(id NodeID) {
 	}
 }
 
+func (n *MemoryNetwork) Partition(a, b NodeID) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.cuts[canon(a, b)] = struct{}{}
+}
+
+func (n *MemoryNetwork) Heal(a, b NodeID) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.cuts, canon(a, b))
+}
+
+func (n *MemoryNetwork) Isolate(id NodeID) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for other := range n.boxes {
+		if other != id {
+			n.cuts[canon(id, other)] = struct{}{}
+		}
+	}
+}
+
+func (n *MemoryNetwork) HealAll() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.cuts = make(map[pair]struct{})
+}
+
 func (n *MemoryNetwork) deliver(msg Message) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	if _, blocked := n.cuts[canon(msg.From, msg.To)]; blocked {
+		return ErrDropped
+	}
 	ch, ok := n.boxes[msg.To]
 	if !ok {
 		return ErrUnknownPeer

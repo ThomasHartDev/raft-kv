@@ -95,17 +95,25 @@ func TestObserveTermIgnoresStale(t *testing.T) {
 	}
 }
 
-func TestObserveTermSameTermStepsDownCandidate(t *testing.T) {
+func TestObserveTermSameTermLeavesCandidate(t *testing.T) {
 	n := NewNode(1, []NodeID{2}, nil)
 	n.StartElection()
-	if !n.ObserveTerm(1) {
-		t.Fatal("candidate should step down on current-term leader contact")
+	if n.ObserveTerm(1) {
+		t.Fatal("another candidate in this term must not force a step-down")
 	}
-	if n.Role() != Follower {
+	if n.Role() != Candidate {
 		t.Fatalf("role=%s", n.Role())
 	}
-	if n.Term() != 1 {
-		t.Fatalf("term=%d", n.Term())
+}
+
+func TestSingleNodeElectionWinsImmediately(t *testing.T) {
+	n := NewNode(1, nil, nil)
+	n.StartElection()
+	if n.Role() != Leader {
+		t.Fatalf("role=%s", n.Role())
+	}
+	if n.VoteCount() != 1 {
+		t.Fatalf("votes=%d", n.VoteCount())
 	}
 }
 

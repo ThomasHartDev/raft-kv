@@ -13,6 +13,7 @@ type Node struct {
 	role     Role
 	term     Term
 	votedFor *NodeID
+	votes    map[NodeID]struct{}
 	peers    []NodeID
 	trans    Transport
 }
@@ -67,14 +68,39 @@ func (n *Node) Peers() []NodeID {
 	return out
 }
 
+func (n *Node) clusterSize() int {
+	return len(n.peers) + 1
+}
+
+func majority(size int) int {
+	return size/2 + 1
+}
+
 func (n *Node) StartElection() Term {
 	n.mu.Lock()
-	defer n.mu.Unlock()
 	n.term++
 	n.role = Candidate
 	self := n.id
 	n.votedFor = &self
-	return n.term
+	n.votes = map[NodeID]struct{}{self: {}}
+	term := n.term
+	peers := append([]NodeID(nil), n.peers...)
+	won := len(n.votes) >= majority(n.clusterSize())
+	if won {
+		n.role = Leader
+	}
+	n.mu.Unlock()
+	if n.trans != nil {
+		for _, p := range peers {
+			_ = n.trans.Send(Message{
+				From: self,
+				To:   p,
+				Term: term,
+				Type: MsgRequestVote,
+			})
+		}
+	}
+	return term
 }
 
 func (n *Node) PromoteLeader() error {
@@ -97,13 +123,16 @@ func (n *Node) ObserveTerm(term Term) bool {
 		n.term = term
 		n.role = Follower
 		n.votedFor = nil
-		return true
-	}
-	if n.role != Follower {
-		n.role = Follower
+		n.votes = nil
 		return true
 	}
 	return false
+}
+
+func (n *Node) VoteCount() int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return len(n.votes)
 }
 
 func (n *Node) Ping(to NodeID) error {
