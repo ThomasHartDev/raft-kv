@@ -67,28 +67,49 @@ func (n *Node) becomeLeaderLocked() {
 	n.hbDue = n.clock.Now()
 }
 
+func (n *Node) startElectionLocked() []Message {
+	if n.role == Leader || n.clock.Now().Before(n.electDue) {
+		return nil
+	}
+	n.term++
+	n.role = Candidate
+	self := n.id
+	n.votedFor = &self
+	n.votes = map[NodeID]struct{}{self: {}}
+	n.resetElectionLocked()
+	if len(n.votes) >= majority(n.clusterSize()) {
+		n.becomeLeaderLocked()
+	}
+	out := make([]Message, 0, len(n.peers))
+	for _, p := range n.peers {
+		out = append(out, Message{
+			From: self,
+			To:   p,
+			Term: n.term,
+			Type: MsgRequestVote,
+		})
+	}
+	return out
+}
+
 func (n *Node) Tick() {
 	n.mu.Lock()
 	now := n.clock.Now()
+	var out []Message
 	if n.role == Leader {
-		var beats []Message
 		if !now.Before(n.hbDue) {
-			beats = n.heartbeatMsgsLocked()
+			out = n.heartbeatMsgsLocked()
 			n.hbDue = now.Add(n.heartbeat)
 		}
-		trans := n.trans
-		n.mu.Unlock()
-		for _, m := range beats {
-			if trans != nil {
-				_ = trans.Send(m)
-			}
-		}
-		return
+	} else if (n.role == Follower || n.role == Candidate) && !now.Before(n.electDue) {
+		out = n.startElectionLocked()
 	}
-	due := !now.Before(n.electDue)
+	trans := n.trans
 	n.mu.Unlock()
-	if due {
-		n.StartElection()
+	for _, m := range out {
+		if trans != nil {
+			_ = trans.Send(m)
+		}
 	}
 }
 

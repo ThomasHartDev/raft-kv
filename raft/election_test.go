@@ -203,6 +203,67 @@ func TestSameTermHeartbeatStepsDownCandidate(t *testing.T) {
 	}
 }
 
+func TestDueFollowerDoesNotCampaignAfterCurrentTermHeartbeat(t *testing.T) {
+	clk := NewManualClock(time.Unix(0, 0))
+	n := NewNodeWithConfig(1, []NodeID{2}, nil, Config{
+		Clock:     clk,
+		ElectMin:  100 * time.Millisecond,
+		ElectMax:  100 * time.Millisecond,
+		Heartbeat: 20 * time.Millisecond,
+		RNG:       rand.New(rand.NewPCG(1, 1)),
+	})
+	clk.Advance(100 * time.Millisecond)
+	n.Step(Message{From: 2, To: 1, Term: 0, Type: MsgHeartbeat})
+	n.Tick()
+	if n.Role() != Follower || n.Term() != 0 {
+		t.Fatalf("role=%s term=%d", n.Role(), n.Term())
+	}
+}
+
+func TestTickDoesNotCampaignAfterWinningVote(t *testing.T) {
+	clk := NewManualClock(time.Unix(0, 0))
+	n := NewNodeWithConfig(1, []NodeID{2}, nil, Config{
+		Clock:     clk,
+		ElectMin:  100 * time.Millisecond,
+		ElectMax:  100 * time.Millisecond,
+		Heartbeat: 20 * time.Millisecond,
+		RNG:       rand.New(rand.NewPCG(1, 1)),
+	})
+	clk.Advance(100 * time.Millisecond)
+	n.Tick()
+	if n.Role() != Candidate || n.Term() != 1 {
+		t.Fatalf("role=%s term=%d", n.Role(), n.Term())
+	}
+	clk.Advance(100 * time.Millisecond)
+	n.Step(Message{From: 2, To: 1, Term: 1, Type: MsgRequestVoteResp, VoteGranted: true})
+	if n.Role() != Leader {
+		t.Fatalf("role=%s", n.Role())
+	}
+	n.Tick()
+	if n.Role() != Leader || n.Term() != 1 {
+		t.Fatalf("role=%s term=%d", n.Role(), n.Term())
+	}
+}
+
+func TestStartElectionNoOpWhenLeader(t *testing.T) {
+	clk := NewManualClock(time.Unix(0, 0))
+	n := NewNodeWithConfig(1, nil, nil, Config{
+		Clock:     clk,
+		ElectMin:  50 * time.Millisecond,
+		ElectMax:  50 * time.Millisecond,
+		Heartbeat: 10 * time.Millisecond,
+		RNG:       rand.New(rand.NewPCG(1, 1)),
+	})
+	n.StartElection()
+	if n.Role() != Leader || n.Term() != 1 {
+		t.Fatalf("role=%s term=%d", n.Role(), n.Term())
+	}
+	n.StartElection()
+	if n.Role() != Leader || n.Term() != 1 {
+		t.Fatalf("role=%s term=%d", n.Role(), n.Term())
+	}
+}
+
 func TestLeaderTickDoesNotStartElection(t *testing.T) {
 	clk := NewManualClock(time.Unix(0, 0))
 	n := NewNodeWithConfig(1, nil, nil, Config{

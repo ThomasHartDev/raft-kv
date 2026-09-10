@@ -99,27 +99,16 @@ func majority(size int) int {
 
 func (n *Node) StartElection() Term {
 	n.mu.Lock()
-	n.term++
-	n.role = Candidate
-	self := n.id
-	n.votedFor = &self
-	n.votes = map[NodeID]struct{}{self: {}}
-	term := n.term
-	peers := append([]NodeID(nil), n.peers...)
-	n.resetElectionLocked()
-	won := len(n.votes) >= majority(n.clusterSize())
-	if won {
-		n.becomeLeaderLocked()
+	if n.role != Leader {
+		n.electDue = n.clock.Now()
 	}
+	msgs := n.startElectionLocked()
+	term := n.term
+	trans := n.trans
 	n.mu.Unlock()
-	if n.trans != nil {
-		for _, p := range peers {
-			_ = n.trans.Send(Message{
-				From: self,
-				To:   p,
-				Term: term,
-				Type: MsgRequestVote,
-			})
+	for _, m := range msgs {
+		if trans != nil {
+			_ = trans.Send(m)
 		}
 	}
 	return term
