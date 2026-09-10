@@ -14,6 +14,7 @@ const (
 	MsgPing MsgType = iota
 	MsgRequestVote
 	MsgRequestVoteResp
+	MsgHeartbeat
 )
 
 type Message struct {

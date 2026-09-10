@@ -2,23 +2,37 @@ package raft
 
 import (
 	"errors"
+	"math/rand/v2"
 	"sync"
+	"time"
 )
 
 var ErrNotCandidate = errors.New("raft: not a candidate")
 
 type Node struct {
-	mu       sync.Mutex
-	id       NodeID
-	role     Role
-	term     Term
-	votedFor *NodeID
-	votes    map[NodeID]struct{}
-	peers    []NodeID
-	trans    Transport
+	mu        sync.Mutex
+	id        NodeID
+	role      Role
+	term      Term
+	votedFor  *NodeID
+	votes     map[NodeID]struct{}
+	peers     []NodeID
+	trans     Transport
+	clock     Clock
+	rng       *rand.Rand
+	electMin  time.Duration
+	electMax  time.Duration
+	heartbeat time.Duration
+	electDue  time.Time
+	hbDue     time.Time
 }
 
 func NewNode(id NodeID, peers []NodeID, trans Transport) *Node {
+	return NewNodeWithConfig(id, peers, trans, Config{})
+}
+
+func NewNodeWithConfig(id NodeID, peers []NodeID, trans Transport, cfg Config) *Node {
+	cfg = cfg.normalized()
 	clean := make([]NodeID, 0, len(peers))
 	seen := map[NodeID]struct{}{id: {}}
 	for _, p := range peers {
@@ -28,12 +42,19 @@ func NewNode(id NodeID, peers []NodeID, trans Transport) *Node {
 		seen[p] = struct{}{}
 		clean = append(clean, p)
 	}
-	return &Node{
-		id:    id,
-		role:  Follower,
-		peers: clean,
-		trans: trans,
+	n := &Node{
+		id:        id,
+		role:      Follower,
+		peers:     clean,
+		trans:     trans,
+		clock:     cfg.Clock,
+		rng:       cfg.RNG,
+		electMin:  cfg.ElectMin,
+		electMax:  cfg.ElectMax,
+		heartbeat: cfg.Heartbeat,
 	}
+	n.resetElectionLocked()
+	return n
 }
 
 func (n *Node) ID() NodeID { return n.id }
@@ -78,26 +99,16 @@ func majority(size int) int {
 
 func (n *Node) StartElection() Term {
 	n.mu.Lock()
-	n.term++
-	n.role = Candidate
-	self := n.id
-	n.votedFor = &self
-	n.votes = map[NodeID]struct{}{self: {}}
-	term := n.term
-	peers := append([]NodeID(nil), n.peers...)
-	won := len(n.votes) >= majority(n.clusterSize())
-	if won {
-		n.role = Leader
+	if n.role != Leader {
+		n.electDue = n.clock.Now()
 	}
+	msgs := n.startElectionLocked()
+	term := n.term
+	trans := n.trans
 	n.mu.Unlock()
-	if n.trans != nil {
-		for _, p := range peers {
-			_ = n.trans.Send(Message{
-				From: self,
-				To:   p,
-				Term: term,
-				Type: MsgRequestVote,
-			})
+	for _, m := range msgs {
+		if trans != nil {
+			_ = trans.Send(m)
 		}
 	}
 	return term
@@ -109,7 +120,7 @@ func (n *Node) PromoteLeader() error {
 	if n.role != Candidate {
 		return ErrNotCandidate
 	}
-	n.role = Leader
+	n.becomeLeaderLocked()
 	return nil
 }
 
@@ -124,6 +135,7 @@ func (n *Node) ObserveTerm(term Term) bool {
 		n.role = Follower
 		n.votedFor = nil
 		n.votes = nil
+		n.resetElectionLocked()
 		return true
 	}
 	return false
