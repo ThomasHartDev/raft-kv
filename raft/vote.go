@@ -10,6 +10,8 @@ func (n *Node) Step(msg Message) {
 		n.role = Follower
 		n.votedFor = nil
 		n.votes = nil
+		// WHY: leftover election deadline would campaign against a new leader.
+		n.resetElectionLocked()
 	}
 	var reply *Message
 	switch msg.Type {
@@ -17,6 +19,8 @@ func (n *Node) Step(msg Message) {
 		reply = n.stepRequestVote(msg)
 	case MsgRequestVoteResp:
 		n.stepRequestVoteResp(msg)
+	case MsgHeartbeat:
+		n.stepHeartbeat(msg)
 	}
 	trans := n.trans
 	n.mu.Unlock()
@@ -31,6 +35,7 @@ func (n *Node) stepRequestVote(msg Message) *Message {
 		id := msg.From
 		n.votedFor = &id
 		granted = true
+		n.resetElectionLocked()
 	}
 	return &Message{
 		From:        n.id,
@@ -50,6 +55,6 @@ func (n *Node) stepRequestVoteResp(msg Message) {
 	}
 	n.votes[msg.From] = struct{}{}
 	if len(n.votes) >= majority(n.clusterSize()) {
-		n.role = Leader
+		n.becomeLeaderLocked()
 	}
 }

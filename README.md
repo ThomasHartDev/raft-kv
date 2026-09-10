@@ -4,7 +4,7 @@ A from-scratch Raft consensus implementation in Go, with a linearizable key-valu
 
 ## What this demonstrates
 
-Raft is the consensus algorithm most production systems actually run (etcd, Consul, CockroachDB). This repo implements it by hand: persistent term and vote, leader election, log replication, membership changes, snapshots, and a client API with linearizable reads. The point is to show the protocol, not wrap a library.
+Raft is the consensus algorithm most production systems actually run (etcd, Consul, CockroachDB). This repo implements it by hand: persistent term and vote, leader election, log replication, membership changes, snapshots, and a client API with linearizable reads. The point is to show the protocol in code.
 
 ## Concepts demonstrated
 
@@ -13,6 +13,10 @@ Raft is the consensus algorithm most production systems actually run (etcd, Cons
 - Monotonic terms and election safety (at most one vote per term)
 - Majority quorum for leadership
 - Split votes: two candidates in the same term, neither wins
+- Randomized election timeouts that break split-vote symmetry
+- Heartbeats as a lease on the follower election timer
+- Discrete-time `Tick` and a `ManualClock` for deterministic election tests
+- Candidate retry: a new term after an election timeout without a majority
 - Asynchronous message-passing network model
 - In-memory transport with bounded mailboxes (non-blocking send, drop on full)
 - Network partition and heal on an undirected cut set
@@ -22,28 +26,36 @@ Raft is the consensus algorithm most production systems actually run (etcd, Cons
 
 - Scaffold: Go modules, a node abstraction, an in-memory transport, CI (`go test`)
 - RequestVote RPCs, one vote per term, majority win, and MemoryNetwork partition/heal
+- Raft leader election: terms, votes, randomized timeouts, and leader heartbeats
 
 ## Usage
 
 ```go
+clk := raft.NewManualClock(time.Unix(0, 0))
+cfg := raft.Config{
+    Clock:     clk,
+    ElectMin:  150 * time.Millisecond,
+    ElectMax:  150 * time.Millisecond,
+    Heartbeat: 50 * time.Millisecond,
+}
+
 net := raft.NewMemoryNetwork(16)
 t1, _ := net.Attach(1)
 t2, _ := net.Attach(2)
 t3, _ := net.Attach(3)
 
-a := raft.NewNode(1, []raft.NodeID{1, 2, 3}, t1)
-b := raft.NewNode(2, []raft.NodeID{1, 2, 3}, t2)
-c := raft.NewNode(3, []raft.NodeID{1, 2, 3}, t3)
+a := raft.NewNodeWithConfig(1, []raft.NodeID{1, 2, 3}, t1, cfg)
+b := raft.NewNodeWithConfig(2, []raft.NodeID{1, 2, 3}, t2, cfg)
+c := raft.NewNodeWithConfig(3, []raft.NodeID{1, 2, 3}, t3, cfg)
 
-net.Isolate(1)
-_ = a.StartElection() // stays candidate: no majority
-net.HealAll()
-_ = a.StartElection()
+clk.Advance(150 * time.Millisecond)
+a.Tick() // times out, becomes candidate, broadcasts RequestVote
 b.Step(<-t2.Recv())
 c.Step(<-t3.Recv())
 a.Step(<-t1.Recv())
 a.Step(<-t1.Recv())
 // a.Role() == raft.Leader
+a.Tick() // empty heartbeats keep b and c from starting an election
 ```
 
 ## Tests
