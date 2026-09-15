@@ -8,6 +8,7 @@ func (n *Node) Propose(data []byte) (uint64, Term, error) {
 	}
 	entry := n.log.append(n.term, data)
 	n.matchIndex[n.id] = entry.Index
+	n.advanceCommitLocked()
 	msgs := n.replicateAllLocked()
 	term := n.term
 	trans := n.trans
@@ -87,6 +88,8 @@ func (n *Node) stepAppendEntriesResp(msg Message) *Message {
 		if n.nextIndex[msg.From] > 1 {
 			n.nextIndex[msg.From]--
 		}
+		// Synchronous resend per rejection is fine over MemoryNetwork; a real network
+		// transport will want batching/backoff here before this is more than in-memory tests.
 		retry := n.replicateToLocked(msg.From)
 		return &retry
 	}

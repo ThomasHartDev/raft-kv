@@ -18,6 +18,19 @@ func TestProposeRejectedWhenNotLeader(t *testing.T) {
 	}
 }
 
+func TestSingleNodeProposeCommitsImmediately(t *testing.T) {
+	_, nodes, trans := attachCluster(t, 1)
+	electLeader(t, nodes, trans, 1)
+
+	idx, _, err := nodes[1].Propose([]byte("set x=1"))
+	if err != nil {
+		t.Fatalf("propose: %v", err)
+	}
+	if got := nodes[1].CommitIndex(); got != idx {
+		t.Fatalf("commitIndex=%d, want %d (leader alone is a majority of 1)", got, idx)
+	}
+}
+
 func TestProposeReplicatesAndCommitsOnMajority(t *testing.T) {
 	_, nodes, trans := attachCluster(t, 1, 2, 3)
 	electLeader(t, nodes, trans, 1)
