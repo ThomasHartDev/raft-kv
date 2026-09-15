@@ -15,15 +15,23 @@ const (
 	MsgRequestVote
 	MsgRequestVoteResp
 	MsgHeartbeat
+	MsgAppendEntries
+	MsgAppendEntriesResp
 )
 
 type Message struct {
-	From        NodeID
-	To          NodeID
-	Term        Term
-	Type        MsgType
-	VoteGranted bool
-	Body        []byte
+	From         NodeID
+	To           NodeID
+	Term         Term
+	Type         MsgType
+	VoteGranted  bool
+	Body         []byte
+	PrevLogIndex uint64
+	PrevLogTerm  Term
+	Entries      []LogEntry
+	LeaderCommit uint64
+	Success      bool
+	MatchIndex   uint64
 }
 
 type Transport interface {

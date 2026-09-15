@@ -21,6 +21,10 @@ func (n *Node) Step(msg Message) {
 		n.stepRequestVoteResp(msg)
 	case MsgHeartbeat:
 		n.stepHeartbeat(msg)
+	case MsgAppendEntries:
+		reply = n.stepAppendEntries(msg)
+	case MsgAppendEntriesResp:
+		reply = n.stepAppendEntriesResp(msg)
 	}
 	trans := n.trans
 	n.mu.Unlock()
