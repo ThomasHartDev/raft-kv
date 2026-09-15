@@ -21,12 +21,19 @@ Raft is the consensus algorithm most production systems actually run (etcd, Cons
 - In-memory transport with bounded mailboxes (non-blocking send, drop on full)
 - Network partition and heal on an undirected cut set
 - Go modules, `go test`, `go vet`, GitHub Actions CI
+- Replicated log with 1-indexed entries and a term-tagged sentinel at index 0
+- AppendEntries consistency check: reject on a missing or term-mismatched `PrevLogIndex`/`PrevLogTerm`
+- Conflicting suffix truncation: a follower drops and overwrites entries that disagree with the leader
+- Per-follower `nextIndex`/`matchIndex` and backoff-then-retry catch-up on rejection
+- Commit index advancement by counting `matchIndex` against quorum, restricted to entries from the leader's current term (Raft §5.4.2)
+- Commit index propagation to followers via the `LeaderCommit` field on the next AppendEntries, not the one that triggered the commit
 
 ## What's implemented
 
 - Scaffold: Go modules, a node abstraction, an in-memory transport, CI (`go test`)
 - RequestVote RPCs, one vote per term, majority win, and MemoryNetwork partition/heal
 - Raft leader election: terms, votes, randomized timeouts, and leader heartbeats
+- Log replication with AppendEntries and commit index advancement
 
 ## Usage
 
@@ -56,6 +63,13 @@ a.Step(<-t1.Recv())
 a.Step(<-t1.Recv())
 // a.Role() == raft.Leader
 a.Tick() // empty heartbeats keep b and c from starting an election
+
+idx, term, _ := a.Propose([]byte("set x=1")) // appends to a's log and replicates
+b.Step(<-t2.Recv())
+a.Step(<-t1.Recv())
+c.Step(<-t3.Recv())
+a.Step(<-t1.Recv())
+// a.CommitIndex() == idx once a majority (including a) has the entry at `term`
 ```
 
 ## Tests

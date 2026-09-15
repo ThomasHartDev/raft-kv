@@ -7,24 +7,31 @@ import (
 	"time"
 )
 
-var ErrNotCandidate = errors.New("raft: not a candidate")
+var (
+	ErrNotCandidate = errors.New("raft: not a candidate")
+	ErrNotLeader    = errors.New("raft: not leader")
+)
 
 type Node struct {
-	mu        sync.Mutex
-	id        NodeID
-	role      Role
-	term      Term
-	votedFor  *NodeID
-	votes     map[NodeID]struct{}
-	peers     []NodeID
-	trans     Transport
-	clock     Clock
-	rng       *rand.Rand
-	electMin  time.Duration
-	electMax  time.Duration
-	heartbeat time.Duration
-	electDue  time.Time
-	hbDue     time.Time
+	mu          sync.Mutex
+	id          NodeID
+	role        Role
+	term        Term
+	votedFor    *NodeID
+	votes       map[NodeID]struct{}
+	peers       []NodeID
+	trans       Transport
+	clock       Clock
+	rng         *rand.Rand
+	electMin    time.Duration
+	electMax    time.Duration
+	heartbeat   time.Duration
+	electDue    time.Time
+	hbDue       time.Time
+	log         *raftLog
+	commitIndex uint64
+	nextIndex   map[NodeID]uint64
+	matchIndex  map[NodeID]uint64
 }
 
 func NewNode(id NodeID, peers []NodeID, trans Transport) *Node {
@@ -52,6 +59,7 @@ func NewNodeWithConfig(id NodeID, peers []NodeID, trans Transport, cfg Config) *
 		electMin:  cfg.ElectMin,
 		electMax:  cfg.ElectMax,
 		heartbeat: cfg.Heartbeat,
+		log:       newRaftLog(),
 	}
 	n.resetElectionLocked()
 	return n

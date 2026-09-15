@@ -65,6 +65,13 @@ func (n *Node) resetElectionLocked() {
 func (n *Node) becomeLeaderLocked() {
 	n.role = Leader
 	n.hbDue = n.clock.Now()
+	last := n.log.lastIndex()
+	n.nextIndex = make(map[NodeID]uint64, len(n.peers))
+	n.matchIndex = make(map[NodeID]uint64, len(n.peers)+1)
+	for _, p := range n.peers {
+		n.nextIndex[p] = last + 1
+	}
+	n.matchIndex[n.id] = last
 }
 
 func (n *Node) startElectionLocked() []Message {
