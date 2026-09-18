@@ -173,7 +173,12 @@ func TestPersistFailureSuppressesRPCs(t *testing.T) {
 	fail := errors.New("disk full")
 	t1, t2 := attachTwo(t, 1, 2)
 	n := NewNodeWithConfig(1, []NodeID{1, 2}, t1, Config{Storage: &hookStorage{err: fail}})
-	n.StartElection()
+	if got := n.StartElection(); got != 0 {
+		t.Fatalf("term=%d", got)
+	}
+	if n.Role() != Follower || n.Term() != 0 || n.VotedFor() != nil {
+		t.Fatalf("role=%s term=%d vote=%v", n.Role(), n.Term(), n.VotedFor())
+	}
 	select {
 	case <-t2.Recv():
 		t.Fatal("must not send RequestVote before term is durable")
@@ -182,6 +187,9 @@ func TestPersistFailureSuppressesRPCs(t *testing.T) {
 	voter, cand := attachTwo(t, 1, 2)
 	v := NewNodeWithConfig(1, []NodeID{1, 2}, voter, Config{Storage: &hookStorage{err: fail}})
 	v.Step(Message{From: 2, To: 1, Term: 1, Type: MsgRequestVote})
+	if v.Term() != 0 || v.VotedFor() != nil {
+		t.Fatalf("term=%d vote=%v", v.Term(), v.VotedFor())
+	}
 	select {
 	case <-cand.Recv():
 		t.Fatal("must not send VoteGranted before votedFor is durable")
@@ -203,9 +211,100 @@ func TestPersistFailureSuppressesRPCs(t *testing.T) {
 	if _, _, err := leader.Propose([]byte("x")); err == nil {
 		t.Fatal("expected persist error")
 	}
+	if leader.LastLogIndex() != 0 || leader.CommitIndex() != 0 {
+		t.Fatalf("last=%d commit=%d", leader.LastLogIndex(), leader.CommitIndex())
+	}
 	select {
 	case <-t4.Recv():
 		t.Fatal("must not send AppendEntries before the log is durable")
 	default:
+	}
+}
+
+func TestProposePersistFailureRollsBackLog(t *testing.T) {
+	fail := errors.New("disk full")
+	gate := &hookStorage{}
+	n := NewNodeWithConfig(1, nil, nil, Config{Storage: gate})
+	n.StartElection()
+	if n.Role() != Leader {
+		t.Fatalf("role=%s", n.Role())
+	}
+	gate.err = fail
+	if _, _, err := n.Propose([]byte("set x=1")); err == nil {
+		t.Fatal("expected persist error")
+	}
+	if n.LastLogIndex() != 0 || n.CommitIndex() != 0 {
+		t.Fatalf("last=%d commit=%d", n.LastLogIndex(), n.CommitIndex())
+	}
+	if _, ok := n.LogEntry(1); ok {
+		t.Fatal("failed propose left an entry")
+	}
+	gate.err = nil
+	idx, _, err := n.Propose([]byte("set x=1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idx != 1 {
+		t.Fatalf("retry index=%d", idx)
+	}
+}
+
+func TestStartElectionPersistFailureDoesNotBecomeLeader(t *testing.T) {
+	fail := errors.New("disk full")
+	n := NewNodeWithConfig(1, nil, nil, Config{Storage: &hookStorage{err: fail}})
+	if got := n.StartElection(); got != 0 {
+		t.Fatalf("term=%d", got)
+	}
+	if n.Role() != Follower || n.Term() != 0 || n.VotedFor() != nil {
+		t.Fatalf("role=%s term=%d vote=%v", n.Role(), n.Term(), n.VotedFor())
+	}
+	n.Tick()
+	if n.Role() != Follower || n.Term() != 0 {
+		t.Fatalf("after tick role=%s term=%d", n.Role(), n.Term())
+	}
+}
+
+func TestFollowerAppendEntriesPersistFailureRollsBackLog(t *testing.T) {
+	fail := errors.New("disk full")
+	t1, t2 := attachTwo(t, 1, 2)
+	gate := &hookStorage{}
+	f := NewNodeWithConfig(1, []NodeID{1, 2}, t1, Config{Storage: gate})
+	f.Step(Message{
+		From: 2, To: 1, Term: 1, Type: MsgAppendEntries,
+		Entries: []LogEntry{
+			{Term: 1, Index: 1, Data: []byte("keep")},
+			{Term: 1, Index: 2, Data: []byte("old")},
+		},
+	})
+	e, ok := f.LogEntry(2)
+	if !ok || string(e.Data) != "old" {
+		t.Fatalf("setup %+v ok=%v", e, ok)
+	}
+	select {
+	case <-t2.Recv():
+	default:
+		t.Fatal("expected first AppendEntriesResp")
+	}
+	gate.err = fail
+	f.Step(Message{
+		From:         2,
+		To:           1,
+		Term:         2,
+		Type:         MsgAppendEntries,
+		PrevLogIndex: 1,
+		PrevLogTerm:  1,
+		Entries:      []LogEntry{{Term: 2, Index: 2, Data: []byte("new")}},
+	})
+	select {
+	case <-t2.Recv():
+		t.Fatal("must not send AppendEntriesResp")
+	default:
+	}
+	e, ok = f.LogEntry(2)
+	if !ok || e.Term != 1 || string(e.Data) != "old" {
+		t.Fatalf("log changed %+v ok=%v", e, ok)
+	}
+	if f.Term() != 1 || f.LastLogIndex() != 2 {
+		t.Fatalf("term=%d last=%d", f.Term(), f.LastLogIndex())
 	}
 }

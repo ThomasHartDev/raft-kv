@@ -129,12 +129,6 @@ func (n *Node) StartElection() Term {
 	}
 	msgs := n.startElectionLocked()
 	term := n.term
-	if msgs != nil {
-		if err := n.persistLocked(); err != nil {
-			n.mu.Unlock()
-			return term
-		}
-	}
 	trans := n.trans
 	n.mu.Unlock()
 	for _, m := range msgs {
@@ -162,12 +156,22 @@ func (n *Node) ObserveTerm(term Term) bool {
 		return false
 	}
 	if term > n.term {
+		prevTerm := n.term
+		prevRole := n.role
+		prevVotedFor := cloneVote(n.votedFor)
+		prevVotes := n.votes
 		n.term = term
 		n.role = Follower
 		n.votedFor = nil
 		n.votes = nil
 		n.resetElectionLocked()
-		_ = n.persistLocked()
+		if err := n.persistLocked(); err != nil {
+			n.term = prevTerm
+			n.role = prevRole
+			n.votedFor = prevVotedFor
+			n.votes = prevVotes
+			return false
+		}
 		return true
 	}
 	return false

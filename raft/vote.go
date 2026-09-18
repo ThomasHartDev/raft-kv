@@ -5,6 +5,7 @@ func (n *Node) Step(msg Message) {
 		return
 	}
 	n.mu.Lock()
+	snap := n.snapshotDurableLocked()
 	persist := false
 	if msg.Term > n.term {
 		n.term = msg.Term
@@ -34,6 +35,7 @@ func (n *Node) Step(msg Message) {
 	}
 	if persist {
 		if err := n.persistLocked(); err != nil {
+			n.restoreDurableLocked(snap)
 			n.mu.Unlock()
 			return
 		}

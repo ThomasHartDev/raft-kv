@@ -181,6 +181,42 @@ func cloneVote(id *NodeID) *NodeID {
 	return &v
 }
 
+type durableSnap struct {
+	term        Term
+	role        Role
+	votedFor    *NodeID
+	votes       map[NodeID]struct{}
+	entries     []LogEntry
+	commitIndex uint64
+}
+
+func (n *Node) snapshotDurableLocked() durableSnap {
+	var votes map[NodeID]struct{}
+	if n.votes != nil {
+		votes = make(map[NodeID]struct{}, len(n.votes))
+		for id := range n.votes {
+			votes[id] = struct{}{}
+		}
+	}
+	return durableSnap{
+		term:        n.term,
+		role:        n.role,
+		votedFor:    cloneVote(n.votedFor),
+		votes:       votes,
+		entries:     cloneEntries(n.log.entries),
+		commitIndex: n.commitIndex,
+	}
+}
+
+func (n *Node) restoreDurableLocked(s durableSnap) {
+	n.term = s.term
+	n.role = s.role
+	n.votedFor = s.votedFor
+	n.votes = s.votes
+	n.log.entries = s.entries
+	n.commitIndex = s.commitIndex
+}
+
 func cloneEntries(in []LogEntry) []LogEntry {
 	out := make([]LogEntry, len(in))
 	for i, e := range in {

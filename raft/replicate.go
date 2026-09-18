@@ -6,13 +6,19 @@ func (n *Node) Propose(data []byte) (uint64, Term, error) {
 		n.mu.Unlock()
 		return 0, 0, ErrNotLeader
 	}
+	prevLast := n.log.lastIndex()
+	prevMatch := n.matchIndex[n.id]
+	prevCommit := n.commitIndex
 	entry := n.log.append(n.term, data)
-	n.matchIndex[n.id] = entry.Index
-	n.advanceCommitLocked()
 	if err := n.persistLocked(); err != nil {
+		n.log.truncateTo(prevLast)
+		n.matchIndex[n.id] = prevMatch
+		n.commitIndex = prevCommit
 		n.mu.Unlock()
 		return 0, 0, err
 	}
+	n.matchIndex[n.id] = entry.Index
+	n.advanceCommitLocked()
 	msgs := n.replicateAllLocked()
 	term := n.term
 	trans := n.trans

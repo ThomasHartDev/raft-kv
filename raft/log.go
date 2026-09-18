@@ -40,6 +40,13 @@ func (l *raftLog) append(term Term, data []byte) LogEntry {
 	return e
 }
 
+func (l *raftLog) truncateTo(index uint64) {
+	if index+1 >= uint64(len(l.entries)) {
+		return
+	}
+	l.entries = l.entries[:index+1]
+}
+
 // appendFrom truncates at the first term mismatch (the new leader wins that slot)
 // and leaves matching entries untouched so a resent AppendEntries can't undo
 // an already-committed suffix it happens to overlap.

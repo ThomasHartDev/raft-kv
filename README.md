@@ -45,13 +45,16 @@ Raft is the consensus algorithm most production systems actually run (etcd, Cons
 
 ```go
 clk := raft.NewManualClock(time.Unix(0, 0))
-store := raft.NewFileStorage("/var/lib/raft-kv/node-1.dat")
-cfg := raft.Config{
+base := raft.Config{
     Clock:     clk,
     ElectMin:  150 * time.Millisecond,
     ElectMax:  150 * time.Millisecond,
     Heartbeat: 50 * time.Millisecond,
-    Storage:   store,
+}
+cfg := func(path string) raft.Config {
+    c := base
+    c.Storage = raft.NewFileStorage(path)
+    return c
 }
 
 net := raft.NewMemoryNetwork(16)
@@ -59,9 +62,9 @@ t1, _ := net.Attach(1)
 t2, _ := net.Attach(2)
 t3, _ := net.Attach(3)
 
-a, _ := raft.OpenNode(1, []raft.NodeID{1, 2, 3}, t1, cfg)
-b, _ := raft.OpenNode(2, []raft.NodeID{1, 2, 3}, t2, cfg)
-c, _ := raft.OpenNode(3, []raft.NodeID{1, 2, 3}, t3, cfg)
+a, _ := raft.OpenNode(1, []raft.NodeID{1, 2, 3}, t1, cfg("/var/lib/raft-kv/node-1.dat"))
+b, _ := raft.OpenNode(2, []raft.NodeID{1, 2, 3}, t2, cfg("/var/lib/raft-kv/node-2.dat"))
+c, _ := raft.OpenNode(3, []raft.NodeID{1, 2, 3}, t3, cfg("/var/lib/raft-kv/node-3.dat"))
 
 clk.Advance(150 * time.Millisecond)
 a.Tick() // times out, becomes candidate, broadcasts RequestVote
