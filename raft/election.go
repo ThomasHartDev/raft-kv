@@ -16,6 +16,7 @@ type Config struct {
 	ElectMin  time.Duration
 	ElectMax  time.Duration
 	Heartbeat time.Duration
+	Storage   Storage
 }
 
 func (c Config) normalized() Config {
@@ -78,12 +79,23 @@ func (n *Node) startElectionLocked() []Message {
 	if n.role == Leader || n.clock.Now().Before(n.electDue) {
 		return nil
 	}
+	prevTerm := n.term
+	prevRole := n.role
+	prevVotedFor := cloneVote(n.votedFor)
+	prevVotes := n.votes
 	n.term++
 	n.role = Candidate
 	self := n.id
 	n.votedFor = &self
 	n.votes = map[NodeID]struct{}{self: {}}
 	n.resetElectionLocked()
+	if err := n.persistLocked(); err != nil {
+		n.term = prevTerm
+		n.role = prevRole
+		n.votedFor = prevVotedFor
+		n.votes = prevVotes
+		return nil
+	}
 	if len(n.votes) >= majority(n.clusterSize()) {
 		n.becomeLeaderLocked()
 	}
