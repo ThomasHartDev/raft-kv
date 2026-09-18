@@ -35,7 +35,7 @@ func (l *raftLog) entriesFrom(index uint64) []LogEntry {
 }
 
 func (l *raftLog) append(term Term, data []byte) LogEntry {
-	e := LogEntry{Term: term, Index: l.lastIndex() + 1, Data: data}
+	e := LogEntry{Term: term, Index: l.lastIndex() + 1, Data: append([]byte(nil), data...)}
 	l.entries = append(l.entries, e)
 	return e
 }
@@ -60,6 +60,7 @@ func (l *raftLog) appendFrom(prevIndex uint64, entries []LogEntry) {
 			l.entries = l.entries[:idx]
 		}
 		if idx == uint64(len(l.entries)) {
+			e.Data = append([]byte(nil), e.Data...)
 			l.entries = append(l.entries, e)
 		}
 	}

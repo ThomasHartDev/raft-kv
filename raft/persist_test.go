@@ -105,6 +105,44 @@ func TestFileStorageRoundTripAndCorrupt(t *testing.T) {
 	}
 }
 
+func TestProposeDoesNotAliasCallerBuffer(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "raft.dat")
+	n := openFileNode(t, 1, nil, nil, path)
+	n.StartElection()
+	if n.Role() != Leader {
+		t.Fatalf("role=%s", n.Role())
+	}
+	buf := []byte("set x=1")
+	if _, _, err := n.Propose(buf); err != nil {
+		t.Fatal(err)
+	}
+	buf[4] = 'y'
+	if _, _, err := n.Propose([]byte("set z=2")); err != nil {
+		t.Fatal(err)
+	}
+	live, ok := n.LogEntry(1)
+	if !ok {
+		t.Fatal("missing live entry 1")
+	}
+	if string(live.Data) == "set y=1" {
+		t.Fatal("live log aliased caller buffer")
+	}
+	if string(live.Data) != "set x=1" {
+		t.Fatalf("live %+v", live)
+	}
+	recovered := openFileNode(t, 1, nil, nil, path)
+	e, ok := recovered.LogEntry(1)
+	if !ok {
+		t.Fatal("missing recovered entry 1")
+	}
+	if string(e.Data) == "set y=1" {
+		t.Fatal("durable log aliased caller buffer")
+	}
+	if string(e.Data) != "set x=1" {
+		t.Fatalf("recovered %+v", e)
+	}
+}
+
 func TestCrashRecoversTermVoteAndLog(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "raft.dat")
 	n := openFileNode(t, 1, nil, nil, path)
