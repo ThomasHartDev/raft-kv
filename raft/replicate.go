@@ -9,6 +9,10 @@ func (n *Node) Propose(data []byte) (uint64, Term, error) {
 	entry := n.log.append(n.term, data)
 	n.matchIndex[n.id] = entry.Index
 	n.advanceCommitLocked()
+	if err := n.persistLocked(); err != nil {
+		n.mu.Unlock()
+		return 0, 0, err
+	}
 	msgs := n.replicateAllLocked()
 	term := n.term
 	trans := n.trans
@@ -48,10 +52,10 @@ func (n *Node) replicateToLocked(peer NodeID) Message {
 	}
 }
 
-func (n *Node) stepAppendEntries(msg Message) *Message {
+func (n *Node) stepAppendEntries(msg Message) (*Message, bool) {
 	reject := &Message{From: n.id, To: msg.From, Term: n.term, Type: MsgAppendEntriesResp, Success: false}
 	if msg.Term < n.term {
-		return reject
+		return reject, false
 	}
 	if n.role != Follower {
 		n.role = Follower
@@ -60,7 +64,7 @@ func (n *Node) stepAppendEntries(msg Message) *Message {
 	n.resetElectionLocked()
 	prevTerm, ok := n.log.termAt(msg.PrevLogIndex)
 	if !ok || prevTerm != msg.PrevLogTerm {
-		return reject
+		return reject, false
 	}
 	n.log.appendFrom(msg.PrevLogIndex, msg.Entries)
 	if msg.LeaderCommit > n.commitIndex {
@@ -77,7 +81,7 @@ func (n *Node) stepAppendEntries(msg Message) *Message {
 		Type:       MsgAppendEntriesResp,
 		Success:    true,
 		MatchIndex: msg.PrevLogIndex + uint64(len(msg.Entries)),
-	}
+	}, true
 }
 
 func (n *Node) stepAppendEntriesResp(msg Message) *Message {

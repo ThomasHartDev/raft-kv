@@ -16,6 +16,7 @@ type Config struct {
 	ElectMin  time.Duration
 	ElectMax  time.Duration
 	Heartbeat time.Duration
+	Storage   Storage
 }
 
 func (c Config) normalized() Config {
@@ -110,6 +111,12 @@ func (n *Node) Tick() {
 		}
 	} else if (n.role == Follower || n.role == Candidate) && !now.Before(n.electDue) {
 		out = n.startElectionLocked()
+		if out != nil {
+			if err := n.persistLocked(); err != nil {
+				n.mu.Unlock()
+				return
+			}
+		}
 	}
 	trans := n.trans
 	n.mu.Unlock()

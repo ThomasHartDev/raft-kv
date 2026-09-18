@@ -4,7 +4,7 @@ A from-scratch Raft consensus implementation in Go, with a linearizable key-valu
 
 ## What this demonstrates
 
-Raft is the consensus algorithm most production systems actually run (etcd, Consul, CockroachDB). This repo implements it by hand: persistent term and vote, leader election, log replication, membership changes, snapshots, and a client API with linearizable reads. The point is to show the protocol in code.
+Raft is the consensus algorithm most production systems actually run (etcd, Consul, CockroachDB). This repo implements it by hand: persistent term and vote, leader election, log replication, membership changes, snapshots, and a client API with linearizable reads. The point is to show the protocol in code, including what has to hit disk before a node can answer an RPC.
 
 ## Concepts demonstrated
 
@@ -27,6 +27,11 @@ Raft is the consensus algorithm most production systems actually run (etcd, Cons
 - Per-follower `nextIndex`/`matchIndex` and backoff-then-retry catch-up on rejection
 - Commit index advancement by counting `matchIndex` against quorum, restricted to entries from the leader's current term (Raft §5.4.2)
 - Commit index propagation to followers via the `LeaderCommit` field on the next AppendEntries, not the one that triggered the commit
+- Raft persistent state (Figure 2): `currentTerm`, `votedFor`, and the log
+- Persist-before-reply: durable write completes before RequestVote or AppendEntries replies leave the node
+- Crash-safe file update: temp file, `fsync`, atomic `rename`, directory `fsync`
+- CRC-32 checksummed encoding and fail-closed `OpenNode` on a corrupt file
+- Volatile vs persistent state: role, `commitIndex`, and in-memory vote tallies reset on restart
 
 ## What's implemented
 
@@ -34,16 +39,19 @@ Raft is the consensus algorithm most production systems actually run (etcd, Cons
 - RequestVote RPCs, one vote per term, majority win, and MemoryNetwork partition/heal
 - Raft leader election: terms, votes, randomized timeouts, and leader heartbeats
 - Log replication with AppendEntries and commit index advancement
+- Persist term, vote, and log to disk so a node recovers after crash
 
 ## Usage
 
 ```go
 clk := raft.NewManualClock(time.Unix(0, 0))
+store := raft.NewFileStorage("/var/lib/raft-kv/node-1.dat")
 cfg := raft.Config{
     Clock:     clk,
     ElectMin:  150 * time.Millisecond,
     ElectMax:  150 * time.Millisecond,
     Heartbeat: 50 * time.Millisecond,
+    Storage:   store,
 }
 
 net := raft.NewMemoryNetwork(16)
@@ -51,9 +59,9 @@ t1, _ := net.Attach(1)
 t2, _ := net.Attach(2)
 t3, _ := net.Attach(3)
 
-a := raft.NewNodeWithConfig(1, []raft.NodeID{1, 2, 3}, t1, cfg)
-b := raft.NewNodeWithConfig(2, []raft.NodeID{1, 2, 3}, t2, cfg)
-c := raft.NewNodeWithConfig(3, []raft.NodeID{1, 2, 3}, t3, cfg)
+a, _ := raft.OpenNode(1, []raft.NodeID{1, 2, 3}, t1, cfg)
+b, _ := raft.OpenNode(2, []raft.NodeID{1, 2, 3}, t2, cfg)
+c, _ := raft.OpenNode(3, []raft.NodeID{1, 2, 3}, t3, cfg)
 
 clk.Advance(150 * time.Millisecond)
 a.Tick() // times out, becomes candidate, broadcasts RequestVote

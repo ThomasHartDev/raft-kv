@@ -5,6 +5,7 @@ func (n *Node) Step(msg Message) {
 		return
 	}
 	n.mu.Lock()
+	persist := false
 	if msg.Term > n.term {
 		n.term = msg.Term
 		n.role = Follower
@@ -12,19 +13,30 @@ func (n *Node) Step(msg Message) {
 		n.votes = nil
 		// WHY: leftover election deadline would campaign against a new leader.
 		n.resetElectionLocked()
+		persist = true
 	}
 	var reply *Message
 	switch msg.Type {
 	case MsgRequestVote:
-		reply = n.stepRequestVote(msg)
+		var p bool
+		reply, p = n.stepRequestVote(msg)
+		persist = persist || p
 	case MsgRequestVoteResp:
 		n.stepRequestVoteResp(msg)
 	case MsgHeartbeat:
 		n.stepHeartbeat(msg)
 	case MsgAppendEntries:
-		reply = n.stepAppendEntries(msg)
+		var p bool
+		reply, p = n.stepAppendEntries(msg)
+		persist = persist || p
 	case MsgAppendEntriesResp:
 		reply = n.stepAppendEntriesResp(msg)
+	}
+	if persist {
+		if err := n.persistLocked(); err != nil {
+			n.mu.Unlock()
+			return
+		}
 	}
 	trans := n.trans
 	n.mu.Unlock()
@@ -33,12 +45,16 @@ func (n *Node) Step(msg Message) {
 	}
 }
 
-func (n *Node) stepRequestVote(msg Message) *Message {
+func (n *Node) stepRequestVote(msg Message) (*Message, bool) {
 	granted := false
+	persist := false
 	if msg.Term == n.term && (n.votedFor == nil || *n.votedFor == msg.From) {
-		id := msg.From
-		n.votedFor = &id
+		if n.votedFor == nil {
+			id := msg.From
+			n.votedFor = &id
+		}
 		granted = true
+		persist = true
 		n.resetElectionLocked()
 	}
 	return &Message{
@@ -47,7 +63,7 @@ func (n *Node) stepRequestVote(msg Message) *Message {
 		Term:        n.term,
 		Type:        MsgRequestVoteResp,
 		VoteGranted: granted,
-	}
+	}, persist
 }
 
 func (n *Node) stepRequestVoteResp(msg Message) {

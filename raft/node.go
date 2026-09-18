@@ -32,6 +32,7 @@ type Node struct {
 	commitIndex uint64
 	nextIndex   map[NodeID]uint64
 	matchIndex  map[NodeID]uint64
+	storage     Storage
 }
 
 func NewNode(id NodeID, peers []NodeID, trans Transport) *Node {
@@ -39,6 +40,14 @@ func NewNode(id NodeID, peers []NodeID, trans Transport) *Node {
 }
 
 func NewNodeWithConfig(id NodeID, peers []NodeID, trans Transport, cfg Config) *Node {
+	n, err := OpenNode(id, peers, trans, cfg)
+	if err != nil {
+		panic(err)
+	}
+	return n
+}
+
+func OpenNode(id NodeID, peers []NodeID, trans Transport, cfg Config) (*Node, error) {
 	cfg = cfg.normalized()
 	clean := make([]NodeID, 0, len(peers))
 	seen := map[NodeID]struct{}{id: {}}
@@ -60,9 +69,17 @@ func NewNodeWithConfig(id NodeID, peers []NodeID, trans Transport, cfg Config) *
 		electMax:  cfg.ElectMax,
 		heartbeat: cfg.Heartbeat,
 		log:       newRaftLog(),
+		storage:   cfg.Storage,
+	}
+	if n.storage != nil {
+		st, err := n.storage.Load()
+		if err != nil {
+			return nil, err
+		}
+		n.restorePersistent(st)
 	}
 	n.resetElectionLocked()
-	return n
+	return n, nil
 }
 
 func (n *Node) ID() NodeID { return n.id }
@@ -112,6 +129,12 @@ func (n *Node) StartElection() Term {
 	}
 	msgs := n.startElectionLocked()
 	term := n.term
+	if msgs != nil {
+		if err := n.persistLocked(); err != nil {
+			n.mu.Unlock()
+			return term
+		}
+	}
 	trans := n.trans
 	n.mu.Unlock()
 	for _, m := range msgs {
@@ -144,6 +167,7 @@ func (n *Node) ObserveTerm(term Term) bool {
 		n.votedFor = nil
 		n.votes = nil
 		n.resetElectionLocked()
+		_ = n.persistLocked()
 		return true
 	}
 	return false
